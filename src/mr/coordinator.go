@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -35,6 +34,9 @@ type Coordinator struct {
 	CompletedReduces  int
 	nReduce           int
 }
+
+
+
 
 func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
 	c.mu.Lock()
@@ -83,21 +85,38 @@ func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) e
 	return nil
 }
 
+
+func (c *Coordinator) CheckStalledTask(t TaskStatus) bool {
+	if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
+			return true
+	}
+	return false
+
+}
+
+func (c* Coordinator) GetNextTask(tasks []TaskStatus) (int, bool) {
+	for i, t := range tasks {
+		if t.status == NotStarted {
+			return i, false
+		}else if isStalled := c.CheckStalledTask(t); isStalled {
+			return i, false
+		}
+	}
+	return -1, true
+}
+
+
 func (c *Coordinator) assignTask(taskType Task, reply *RequestTaskReply) (int, bool) {
 	tasks := c.getTasksForType(taskType)
 
-	// find new task
-	for i, t := range tasks {
-		if t.status == NotStarted {
-			c.markTaskInProgress(taskType, i)
-			reply.TaskID = i
-			reply.TaskType = taskType
-			return i, true
-		}
-	}
-	taskID, err := c.findStalledTask(taskType)
-	if err != nil {
-		return -1, false // No stuck tasks, should wait
+
+	// using GetNextTask to find tasks that are stalled alongside
+	// tasks that are not started yet
+	// rather than waiting for all the didn't start tasks to be finished
+	taskID, completed := c.GetNextTask(tasks)
+
+	if completed {
+		return -1, false // No tasks available, should wait
 	}
 
 	// reassign a stalled task
@@ -124,16 +143,16 @@ func (c *Coordinator) markTaskInProgress(taskType Task, taskID int) {
 	}
 }
 
-func (c *Coordinator) findStalledTask(taskType Task) (int, error) {
-	tasks := c.getTasksForType(taskType)
+// func (c *Coordinator) findStalledTask(taskType Task) (int, error) {
+// 	tasks := c.getTasksForType(taskType)
 
-	for i, t := range tasks {
-		if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
-			return i, nil
-		}
-	}
-	return -1, fmt.Errorf("no stuck tasks")
-}
+// 	for i, t := range tasks {
+// 		if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
+// 			return i, nil
+// 		}
+// 	}
+// 	return -1, fmt.Errorf("no stuck tasks")
+// }
 
 // an example RPC handler.
 //
