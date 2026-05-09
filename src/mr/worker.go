@@ -128,7 +128,8 @@ func startReduceTask(reducef func(string, []string) string, taskID int, nMap int
 		}
 	}
 	// PERF: consider pre allocating the kv slice
-	kvs := make([]KeyValue, 0)
+	// resolved 
+	kvs := make([]KeyValue, 0, 1000)
 	for _, f := range files {
 		file, err := os.Open(f)
 		if err != nil {
