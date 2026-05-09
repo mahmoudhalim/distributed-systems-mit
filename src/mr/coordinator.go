@@ -35,9 +35,6 @@ type Coordinator struct {
 	nReduce           int
 }
 
-
-
-
 func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -73,10 +70,11 @@ func (c *Coordinator) RequestTask(args *RequestTaskArgs, reply *RequestTaskReply
 func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if args.TaskType == Map {
+	switch args.TaskType {
+	case Map:
 		c.MapTasksStatus[args.TaskID].status = Completed
 		c.CompletedMaps += 1
-	} else if args.TaskType == Reduce {
+	case Reduce:
 		c.ReduceTasksStatus[args.TaskID].status = Completed
 		c.CompletedReduces += 1
 	}
@@ -85,41 +83,22 @@ func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) e
 	return nil
 }
 
-
-func (c *Coordinator) CheckStalledTask(t TaskStatus) bool {
-	if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
-			return true
-	}
-	return false
-
-}
-
-func (c* Coordinator) GetNextTask(tasks []TaskStatus) (int, bool) {
-	for i, t := range tasks {
-		if t.status == NotStarted {
-			return i, false
-		}else if isStalled := c.CheckStalledTask(t); isStalled {
-			return i, false
-		}
-	}
-	return -1, true
-}
-
-
 func (c *Coordinator) assignTask(taskType Task, reply *RequestTaskReply) (int, bool) {
 	tasks := c.getTasksForType(taskType)
 
+	taskID := -1
 
-	// using GetNextTask to find tasks that are stalled alongside
-	// tasks that are not started yet
-	// rather than waiting for all the didn't start tasks to be finished
-	taskID, completed := c.GetNextTask(tasks)
-
-	if completed {
-		return -1, false // No tasks available, should wait
+	for i, t := range tasks {
+		if t.status == NotStarted {
+			taskID = i
+		} else if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
+			taskID = i
+		}
+	}
+	if taskID == -1 {
+		return -1, false // No tasks available
 	}
 
-	// reassign a stalled task
 	c.markTaskInProgress(taskType, taskID)
 	reply.TaskID = taskID
 	reply.TaskType = taskType
@@ -134,25 +113,15 @@ func (c *Coordinator) getTasksForType(taskType Task) []TaskStatus {
 }
 
 func (c *Coordinator) markTaskInProgress(taskType Task, taskID int) {
-	if taskType == Map {
+	switch taskType {
+	case Map:
 		c.MapTasksStatus[taskID].status = InProgress
 		c.MapTasksStatus[taskID].startTime = time.Now()
-	} else if taskType == Reduce {
+	case Reduce:
 		c.ReduceTasksStatus[taskID].status = InProgress
 		c.ReduceTasksStatus[taskID].startTime = time.Now()
 	}
 }
-
-// func (c *Coordinator) findStalledTask(taskType Task) (int, error) {
-// 	tasks := c.getTasksForType(taskType)
-
-// 	for i, t := range tasks {
-// 		if t.status == InProgress && time.Since(t.startTime) > 10*time.Second {
-// 			return i, nil
-// 		}
-// 	}
-// 	return -1, fmt.Errorf("no stuck tasks")
-// }
 
 // an example RPC handler.
 //
