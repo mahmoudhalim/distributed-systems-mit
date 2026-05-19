@@ -43,6 +43,26 @@ func MakeLock(ck kvtest.IKVClerk, lockname string) *Lock {
 	return lk
 }
 
+func (lk *Lock) refreshState() (string, rpc.Tversion) {
+	state, ver, _ := lk.ck.Get(lk.lockName)
+	return state, ver
+}
+
+func (lk *Lock) acquiredAfterMaybe() bool {
+	state, ver := lk.refreshState()
+	if state == lk.clientID {
+		lk.lockVersion = ver
+		return true
+	}
+	return false
+}
+
+func (lk *Lock) releasedAfterMaybe() bool {
+	state, ver := lk.refreshState()
+	lk.lockVersion = ver
+	return state != lk.clientID
+}
+
 func (lk *Lock) Acquire() {
 	for {
 		DPrintf("Trying to lock %s", lk.lockName)
@@ -51,12 +71,9 @@ func (lk *Lock) Acquire() {
 			err := lk.ck.Put(lk.lockName, lk.clientID, 0)
 			if err == rpc.ErrMaybe {
 				DPrintf(">>>>>>>>>>>>>>>Maybe locked")
-				state, ver, _ = lk.ck.Get(lk.lockName)
-				if state == lk.clientID {
-					lk.lockVersion = ver
+				if lk.acquiredAfterMaybe() {
 					return
 				}
-				lk.lockVersion = ver
 				continue
 			}
 			if err != rpc.OK {
@@ -79,9 +96,7 @@ func (lk *Lock) Acquire() {
 			err := lk.ck.Put(lk.lockName, lk.clientID, ver)
 			if err == rpc.ErrMaybe {
 				DPrintf(">>>>>>>>>>>>>>>Maybe Locked")
-				state, ver, _ := lk.ck.Get(lk.lockName)
-				lk.lockVersion = ver
-				if state == lk.clientID {
+				if lk.acquiredAfterMaybe() {
 					return
 				}
 			}
@@ -103,12 +118,8 @@ func (lk *Lock) Release() {
 		err := lk.ck.Put(lk.lockName, "0", lk.lockVersion)
 		if err == rpc.ErrMaybe {
 			DPrintf(">>>>>>>>>>>>>>>Maybe Freed")
-			state, ver, _ := lk.ck.Get(lk.lockName)
-			if state == "0" { // was actually freed
+			if lk.releasedAfterMaybe() {
 				return
-			}
-			if ver > lk.lockVersion {
-				return // maybe some took the lock before Get was executed
 			}
 		}
 		if err != rpc.OK {
