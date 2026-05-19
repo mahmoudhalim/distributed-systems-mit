@@ -48,7 +48,18 @@ func (lk *Lock) Acquire() {
 		DPrintf("Trying to lock %s", lk.lockName)
 		state, ver, err := lk.ck.Get(lk.lockName)
 		if err == rpc.ErrNoKey { // lock does not exist
-			if err := lk.ck.Put(lk.lockName, lk.clientID, 0); err != rpc.OK {
+			err := lk.ck.Put(lk.lockName, lk.clientID, 0)
+			if err == rpc.ErrMaybe {
+				DPrintf(">>>>>>>>>>>>>>>Maybe locked")
+				state, ver, _ = lk.ck.Get(lk.lockName)
+				if state == lk.clientID {
+					lk.lockVersion = ver
+					return
+				}
+				lk.lockVersion = ver
+				continue
+			}
+			if err != rpc.OK {
 				continue
 			}
 			lk.lockVersion = 1
@@ -66,6 +77,14 @@ func (lk *Lock) Acquire() {
 			}
 			// free
 			err := lk.ck.Put(lk.lockName, lk.clientID, ver)
+			if err == rpc.ErrMaybe {
+				DPrintf(">>>>>>>>>>>>>>>Maybe Locked")
+				state, ver, _ := lk.ck.Get(lk.lockName)
+				lk.lockVersion = ver
+				if state == lk.clientID {
+					return
+				}
+			}
 			if err != rpc.OK {
 				continue
 			}
@@ -80,7 +99,18 @@ func (lk *Lock) Release() {
 		return
 	}
 	for {
+		DPrintf("try to free %s", lk.lockName)
 		err := lk.ck.Put(lk.lockName, "0", lk.lockVersion)
+		if err == rpc.ErrMaybe {
+			DPrintf(">>>>>>>>>>>>>>>Maybe Freed")
+			state, ver, _ := lk.ck.Get(lk.lockName)
+			if state == "0" { // was actually freed
+				return
+			}
+			if ver > lk.lockVersion {
+				return // maybe some took the lock before Get was executed
+			}
+		}
 		if err != rpc.OK {
 			continue
 		}
