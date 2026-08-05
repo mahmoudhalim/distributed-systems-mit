@@ -93,7 +93,7 @@ func (rf *Raft) persist() {
 	rf.persister.Save(raftstate, snapshot)
 }
 
-	// restore previously persisted state.
+// restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
