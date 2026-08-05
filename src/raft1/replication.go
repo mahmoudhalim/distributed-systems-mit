@@ -17,12 +17,18 @@ func (rf *Raft) sendToFollowers() {
 			}
 			go func(p int) {
 				rf.mu.Lock()
-
-				prevLogIndex := rf.nextIndex[peer] - 1
-				prevLogTerm := rf.Log[prevLogIndex].Term
+				if rf.nextIndex[p] <= rf.lastSnapshotIndex {
+					// peer is behind the snapshot: send it instead of log entries.
+					rf.mu.Unlock()
+					rf.sendInstallSnapshotsToPeer(p)
+					return
+				}
+				prevLogIndex := rf.nextIndex[p] - 1
+				prevLogTerm := rf.getEntry(prevLogIndex).Term
 				var entries []LogEntry
-				if len(rf.Log) > rf.nextIndex[peer] {
-					entries = append([]LogEntry{}, rf.Log[rf.nextIndex[peer]:]...)
+				if len(rf.Log)+rf.lastSnapshotIndex > rf.nextIndex[p] {
+					idx := rf.nextIndex[p] - rf.lastSnapshotIndex
+					entries = append([]LogEntry{}, rf.Log[idx:]...)
 				}
 				args := &AppendEntriesArgs{
 					Term:         rf.CurrentTerm,
@@ -48,48 +54,49 @@ func (rf *Raft) sendToFollowers() {
 					}
 					if reply.Success {
 						newMatch := args.PrevLogIndex + len(args.Entries)
-						if newMatch > rf.matchIndex[peer] {
-							rf.matchIndex[peer] = newMatch
-							rf.nextIndex[peer] = newMatch + 1
+						if newMatch > rf.matchIndex[p] {
+							rf.matchIndex[p] = newMatch
+							rf.nextIndex[p] = newMatch + 1
 							rf.updateCommitIndex()
 						}
 					} else {
 						// back up nextIndex by more than one entry using the
 						// conflicting-entry information from the follower.
+						// nextIndex may drop below lastSnapshotIndex; the
+						// next tick then switches to InstallSnapshot.
 						switch {
 						case reply.XLen > 0 && args.PrevLogIndex >= reply.XLen:
 							// follower's log is too short.
-							rf.nextIndex[peer] = max(1, reply.XLen)
+							rf.nextIndex[p] = max(1, reply.XLen)
 						case reply.XTerm > 0:
 							// find the last index in our log with that term.
 							idx := args.PrevLogIndex
-							if idx >= len(rf.Log) {
-								idx = len(rf.Log) - 1
+							if idx >= len(rf.Log)+rf.lastSnapshotIndex {
+								idx = len(rf.Log) + rf.lastSnapshotIndex - 1
 							}
-							for idx > 0 && rf.Log[idx].Term > reply.XTerm {
+							for idx > rf.lastSnapshotIndex && rf.getEntry(idx).Term > reply.XTerm {
 								idx--
 							}
-							if idx > 0 && rf.Log[idx].Term == reply.XTerm {
-								rf.nextIndex[peer] = max(1, idx+1)
+							if idx > rf.lastSnapshotIndex && rf.getEntry(idx).Term == reply.XTerm {
+								rf.nextIndex[p] = max(1, idx+1)
 							} else {
 								// we don't have that term.
-								rf.nextIndex[peer] = max(1, reply.XIndex)
+								rf.nextIndex[p] = max(1, reply.XIndex)
 							}
 						default:
-							rf.nextIndex[peer] = max(1, args.PrevLogIndex)
+							rf.nextIndex[p] = max(1, args.PrevLogIndex)
 						}
 					}
 				}
 			}(peer)
 		}
 		time.Sleep(100 * time.Millisecond)
-
 	}
 }
 
 func (rf *Raft) updateCommitIndex() {
-	for n := len(rf.Log) - 1; n > rf.commitIndex; n-- {
-		if rf.Log[n].Term != rf.CurrentTerm {
+	for n := len(rf.Log) + rf.lastSnapshotIndex - 1; n > rf.commitIndex && n > rf.lastSnapshotIndex; n-- {
+		if rf.getEntry(n).Term != rf.CurrentTerm {
 			continue
 		}
 
@@ -105,5 +112,51 @@ func (rf *Raft) updateCommitIndex() {
 			rf.commit <- true
 			break
 		}
+	}
+}
+
+func (rf *Raft) sendInstallSnapshotsToPeer(peer int) {
+	rf.mu.Lock()
+	if rf.Role != Leader {
+		rf.mu.Unlock()
+		return
+	}
+
+	args := &InstallSnapshotArgs{
+		Term:              rf.CurrentTerm,
+		LeaderID:          rf.me,
+		LastIncludedIndex: rf.lastSnapshotIndex,
+		LastIncludedTerm:  rf.lastSnapshotTerm,
+		Data:              rf.persister.ReadSnapshot(), // Read snapshot bytes from storage
+	}
+	rf.mu.Unlock()
+
+	reply := &InstallSnapshotReply{}
+
+	ok := rf.sendInstallSnapshot(peer, args, reply)
+
+	if !ok {
+		return
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.Role != Leader || rf.CurrentTerm != args.Term {
+		return
+	}
+
+	if reply.Term > rf.CurrentTerm {
+		rf.becomeFollower(reply.Term)
+		return
+	}
+
+	// Unconditionally move past the installed snapshot. A stale
+	// matchIndex (advanced by an out-of-order AppendEntries reply)
+	// must not keep nextIndex pinned at/below the snapshot, or the
+	// leader would re-send the same snapshot forever.
+	rf.nextIndex[peer] = args.LastIncludedIndex + 1
+	if args.LastIncludedIndex > rf.matchIndex[peer] {
+		rf.matchIndex[peer] = args.LastIncludedIndex
 	}
 }

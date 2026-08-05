@@ -34,14 +34,14 @@ func (rf *Raft) startElection() {
 			rf.mu.Unlock()
 			continue
 		}
-		lastLogIndex := len(rf.Log) - 1
+		lastLogIndex := len(rf.Log) - 1 + rf.lastSnapshotIndex
 		rf.mu.Unlock()
 		go func(p int) {
 			rf.mu.Lock()
 			args := &RequestVoteArgs{
 				Term:         rf.CurrentTerm,
 				CandidateID:  rf.me,
-				LastLogTerm:  rf.Log[lastLogIndex].Term,
+				LastLogTerm:  rf.getEntry(lastLogIndex).Term,
 				LastLogIndex: lastLogIndex,
 			}
 			rf.mu.Unlock()
@@ -68,8 +68,8 @@ func (rf *Raft) startElection() {
 						rf.nextIndex = make([]int, len(rf.peers))
 						rf.matchIndex = make([]int, len(rf.peers))
 						for i := range rf.peers {
-							rf.nextIndex[i] = len(rf.Log)
-							rf.matchIndex[i] = 0
+							rf.nextIndex[i] = len(rf.Log) + rf.lastSnapshotIndex
+							rf.matchIndex[i] = rf.lastSnapshotIndex
 						}
 						go rf.sendToFollowers()
 

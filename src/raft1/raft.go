@@ -62,6 +62,10 @@ type Raft struct {
 
 	lastReset       time.Time
 	electionTimeout time.Duration
+
+	// Snapshot state
+	lastSnapshotIndex int
+	lastSnapshotTerm  int
 }
 
 // return currentterm and whether this server
@@ -79,15 +83,21 @@ func (rf *Raft) GetState() (int, bool) {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (3C).
+func (rf *Raft) encodeRaftState() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.CurrentTerm)
 	e.Encode(rf.VotedFor)
 	e.Encode(rf.Log)
-	raftstate := w.Bytes()
-	rf.persister.Save(raftstate, nil)
+	e.Encode(rf.lastSnapshotIndex)
+	e.Encode(rf.lastSnapshotTerm)
+	return w.Bytes()
+}
+
+func (rf *Raft) persist() {
+	raftstate := rf.encodeRaftState()
+	snapshot := rf.persister.ReadSnapshot()
+	rf.persister.Save(raftstate, snapshot)
 }
 
 // restore previously persisted state.
@@ -111,6 +121,20 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.VotedFor = votedFor
 		rf.Log = log
 	}
+	var lastSnapshotIndex int
+	var lastSnapshotTerm int
+	if err := d.Decode(&lastSnapshotIndex); err != nil {
+		// state persisted before snapshots were added
+		lastSnapshotIndex = 0
+		lastSnapshotTerm = 0
+	} else {
+		rf.lastSnapshotIndex = lastSnapshotIndex
+		rf.lastSnapshotTerm = lastSnapshotTerm
+	}
+	if rf.lastSnapshotIndex > 0 {
+		rf.commitIndex = rf.lastSnapshotIndex
+		rf.lastApplied = rf.lastSnapshotIndex
+	}
 }
 
 // how many bytes in Raft's persisted log?
@@ -125,7 +149,32 @@ func (rf *Raft) PersistBytes() int {
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if index <= rf.lastSnapshotIndex { // i have more updated snapshot
+		return
+	}
+	rf.lastSnapshotTerm = rf.getEntry(index).Term
+	rf.truncateLog(index)
+	rf.lastSnapshotIndex = index
+	raftState := rf.encodeRaftState()
+	rf.persister.Save(raftState, snapshot)
+}
+
+func (rf *Raft) truncateLog(index int) {
+	idx := index - rf.lastSnapshotIndex
+	dummyEntry := LogEntry{Term: rf.Log[idx].Term, Command: nil}
+
+	if len(rf.Log) > idx+1 {
+		rf.Log = append([]LogEntry{dummyEntry}, rf.Log[idx+1:]...)
+	} else {
+		rf.Log = []LogEntry{dummyEntry}
+	}
+}
+
+func (rf *Raft) getEntry(index int) LogEntry {
+	return rf.Log[index-rf.lastSnapshotIndex]
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -150,7 +199,7 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 
 	rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, command})
 	rf.persist()
-	return len(rf.Log) - 1, rf.CurrentTerm, true
+	return len(rf.Log) - 1 + rf.lastSnapshotIndex, rf.CurrentTerm, true
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -170,7 +219,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.applyCh = applyCh
-	rf.commit = make(chan bool)
+	// Buffered: commit signals are sent while holding rf.mu (see
+	// AppendEntries/updateCommitIndex/InstallSnapshot). If the apply
+	// loop is blocked on applyCh (the applier does a synchronous RPC
+	// to the tester), an unbuffered send would block forever while
+	// holding the lock, wedging the whole server. Signals are just
+	// wakeups; applyCommand re-reads commitIndex on every wakeup, so
+	// stale/buffered signals are harmless.
+	rf.commit = make(chan bool, 100)
 	// Your initialization code here (3A, 3B, 3C).
 	rf.CurrentTerm = 0
 	rf.VotedFor = -1
