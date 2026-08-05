@@ -59,32 +59,11 @@ func (rf *Raft) sendToFollowers() {
 							rf.updateCommitIndex()
 						}
 					} else {
-						// back up nextIndex by more than one entry using the
-						// conflicting-entry information from the follower.
-						// nextIndex may drop below the snapshot index; the
-						// next tick then switches to InstallSnapshot.
-						switch {
-						case reply.XLen > 0 && args.PrevLogIndex >= reply.XLen:
-							// follower's log is too short.
-							rf.nextIndex[p] = max(1, reply.XLen)
-						case reply.XTerm > 0:
-							// find the last index in our log with that term.
-							idx := args.PrevLogIndex
-							if idx >= rf.log.len() {
-								idx = rf.log.lastIndex()
-							}
-							for idx > rf.log.snapshotIndex() && rf.log.entry(idx).Term > reply.XTerm {
-								idx--
-							}
-							if idx > rf.log.snapshotIndex() && rf.log.entry(idx).Term == reply.XTerm {
-								rf.nextIndex[p] = max(1, idx+1)
-							} else {
-								// we don't have that term.
-								rf.nextIndex[p] = max(1, reply.XIndex)
-							}
-						default:
-							rf.nextIndex[p] = max(1, args.PrevLogIndex)
-						}
+						// back up nextIndex using the conflicting-entry
+						// information from the follower. nextIndex may
+						// drop below the snapshot index; the next tick
+						// then switches to InstallSnapshot.
+						rf.nextIndex[p] = backoffNextIndex(args.PrevLogIndex, &rf.log, reply)
 					}
 				}
 			}(peer)

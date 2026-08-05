@@ -59,26 +59,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.CurrentTerm
 	rf.lastReset = time.Now()
 
-	if args.PrevLogIndex >= rf.log.len() {
-		// follower's log is too short: report its length so the
-		// leader can back up nextIndex past it.
+	i, conflict := checkAppend(&rf.log, args.PrevLogIndex, args.PrevLogTerm, args.Entries)
+	if conflict != (appendConflict{}) {
+		// the request cannot be applied: report the conflict so the
+		// leader can back off.
 		reply.Success = false
-		reply.XLen = rf.log.len()
+		reply.XLen = conflict.XLen
+		reply.XTerm = conflict.XTerm
+		reply.XIndex = conflict.XIndex
 		return
 	}
-	if args.PrevLogIndex >= rf.log.snapshotIndex() && rf.log.entry(args.PrevLogIndex).Term != args.PrevLogTerm {
-		// conflicting entry: report the term and the first index of
-		// that term in this server's log.
-		reply.Success = false
-		reply.XTerm = rf.log.entry(args.PrevLogIndex).Term
-		reply.XIndex = args.PrevLogIndex
-		for reply.XIndex > rf.log.snapshotIndex()+1 && rf.log.entry(reply.XIndex-1).Term == reply.XTerm {
-			reply.XIndex--
-		}
-		return
-	}
-
-	i := rf.log.matchPrefix(args.PrevLogIndex, args.Entries)
 	logChanged := false
 	if i < len(args.Entries) {
 		rf.log.truncateTo(args.PrevLogIndex + 1 + i)
