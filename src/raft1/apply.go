@@ -9,7 +9,7 @@ func (rf *Raft) applyCommand() {
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 			msgs = append(msgs, raftapi.ApplyMsg{
 				CommandValid: true,
-				Command:      rf.getEntry(i).Command,
+				Command:      rf.log.entry(i).Command,
 				CommandIndex: i,
 			})
 			DPrintf("Server %d committed entry %d\n", rf.me, i)

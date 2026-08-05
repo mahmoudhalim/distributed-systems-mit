@@ -17,18 +17,17 @@ func (rf *Raft) sendToFollowers() {
 			}
 			go func(p int) {
 				rf.mu.Lock()
-				if rf.nextIndex[p] <= rf.lastSnapshotIndex {
+				if rf.nextIndex[p] <= rf.log.snapshotIndex() {
 					// peer is behind the snapshot: send it instead of log entries.
 					rf.mu.Unlock()
 					rf.sendInstallSnapshotsToPeer(p)
 					return
 				}
 				prevLogIndex := rf.nextIndex[p] - 1
-				prevLogTerm := rf.getEntry(prevLogIndex).Term
+				prevLogTerm := rf.log.entry(prevLogIndex).Term
 				var entries []LogEntry
-				if len(rf.Log)+rf.lastSnapshotIndex > rf.nextIndex[p] {
-					idx := rf.nextIndex[p] - rf.lastSnapshotIndex
-					entries = append([]LogEntry{}, rf.Log[idx:]...)
+				if rf.log.len() > rf.nextIndex[p] {
+					entries = rf.log.since(rf.nextIndex[p])
 				}
 				args := &AppendEntriesArgs{
 					Term:         rf.CurrentTerm,
@@ -62,7 +61,7 @@ func (rf *Raft) sendToFollowers() {
 					} else {
 						// back up nextIndex by more than one entry using the
 						// conflicting-entry information from the follower.
-						// nextIndex may drop below lastSnapshotIndex; the
+						// nextIndex may drop below the snapshot index; the
 						// next tick then switches to InstallSnapshot.
 						switch {
 						case reply.XLen > 0 && args.PrevLogIndex >= reply.XLen:
@@ -71,13 +70,13 @@ func (rf *Raft) sendToFollowers() {
 						case reply.XTerm > 0:
 							// find the last index in our log with that term.
 							idx := args.PrevLogIndex
-							if idx >= len(rf.Log)+rf.lastSnapshotIndex {
-								idx = len(rf.Log) + rf.lastSnapshotIndex - 1
+							if idx >= rf.log.len() {
+								idx = rf.log.lastIndex()
 							}
-							for idx > rf.lastSnapshotIndex && rf.getEntry(idx).Term > reply.XTerm {
+							for idx > rf.log.snapshotIndex() && rf.log.entry(idx).Term > reply.XTerm {
 								idx--
 							}
-							if idx > rf.lastSnapshotIndex && rf.getEntry(idx).Term == reply.XTerm {
+							if idx > rf.log.snapshotIndex() && rf.log.entry(idx).Term == reply.XTerm {
 								rf.nextIndex[p] = max(1, idx+1)
 							} else {
 								// we don't have that term.
@@ -95,8 +94,8 @@ func (rf *Raft) sendToFollowers() {
 }
 
 func (rf *Raft) updateCommitIndex() {
-	for n := len(rf.Log) + rf.lastSnapshotIndex - 1; n > rf.commitIndex && n > rf.lastSnapshotIndex; n-- {
-		if rf.getEntry(n).Term != rf.CurrentTerm {
+	for n := rf.log.lastIndex(); n > rf.commitIndex && n > rf.log.snapshotIndex(); n-- {
+		if rf.log.entry(n).Term != rf.CurrentTerm {
 			continue
 		}
 
@@ -125,8 +124,8 @@ func (rf *Raft) sendInstallSnapshotsToPeer(peer int) {
 	args := &InstallSnapshotArgs{
 		Term:              rf.CurrentTerm,
 		LeaderID:          rf.me,
-		LastIncludedIndex: rf.lastSnapshotIndex,
-		LastIncludedTerm:  rf.lastSnapshotTerm,
+		LastIncludedIndex: rf.log.snapshotIndex(),
+		LastIncludedTerm:  rf.log.snapshotTerm(),
 		Data:              rf.persister.ReadSnapshot(), // Read snapshot bytes from storage
 	}
 	rf.mu.Unlock()

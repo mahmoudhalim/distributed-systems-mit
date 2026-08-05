@@ -31,9 +31,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = false
 
 	if rf.VotedFor == -1 || rf.VotedFor == args.CandidateID {
-		lastLogIndex := len(rf.Log) - 1 + rf.lastSnapshotIndex
-		if args.LastLogTerm > rf.getEntry(lastLogIndex).Term ||
-			(args.LastLogTerm == rf.getEntry(lastLogIndex).Term && args.LastLogIndex >= lastLogIndex) {
+		if args.LastLogTerm > rf.log.lastTerm() ||
+			(args.LastLogTerm == rf.log.lastTerm() && args.LastLogIndex >= rf.log.lastIndex()) {
 			reply.VoteGranted = true
 			rf.VotedFor = args.CandidateID
 			rf.lastReset = time.Now()
@@ -60,47 +59,40 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.CurrentTerm
 	rf.lastReset = time.Now()
 
-	if args.PrevLogIndex >= len(rf.Log)+rf.lastSnapshotIndex {
+	if args.PrevLogIndex >= rf.log.len() {
 		// follower's log is too short: report its length so the
 		// leader can back up nextIndex past it.
 		reply.Success = false
-		reply.XLen = len(rf.Log) + rf.lastSnapshotIndex
+		reply.XLen = rf.log.len()
 		return
 	}
-	if args.PrevLogIndex >= rf.lastSnapshotIndex && rf.getEntry(args.PrevLogIndex).Term != args.PrevLogTerm {
+	if args.PrevLogIndex >= rf.log.snapshotIndex() && rf.log.entry(args.PrevLogIndex).Term != args.PrevLogTerm {
 		// conflicting entry: report the term and the first index of
 		// that term in this server's log.
 		reply.Success = false
-		reply.XTerm = rf.getEntry(args.PrevLogIndex).Term
+		reply.XTerm = rf.log.entry(args.PrevLogIndex).Term
 		reply.XIndex = args.PrevLogIndex
-		for reply.XIndex > rf.lastSnapshotIndex+1 && rf.getEntry(reply.XIndex-1).Term == reply.XTerm {
+		for reply.XIndex > rf.log.snapshotIndex()+1 && rf.log.entry(reply.XIndex-1).Term == reply.XTerm {
 			reply.XIndex--
 		}
 		return
 	}
 
-	i := 0
-	for ; i < len(args.Entries); i++ {
-		idx := args.PrevLogIndex + 1 + i
-		if idx >= len(rf.Log)+rf.lastSnapshotIndex || rf.getEntry(idx).Term != args.Entries[i].Term {
-			break
-		}
-	}
+	i := rf.log.matchPrefix(args.PrevLogIndex, args.Entries)
 	logChanged := false
 	if i < len(args.Entries) {
-		idx := args.PrevLogIndex + 1 + i - rf.lastSnapshotIndex
-		rf.Log = rf.Log[:max(1, idx)]
-		rf.Log = append(rf.Log, args.Entries[i:]...)
+		rf.log.truncateTo(args.PrevLogIndex + 1 + i)
+		rf.log.append(args.Entries[i:]...)
 		logChanged = true
 	}
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = max(rf.lastSnapshotIndex, min(args.LeaderCommit, args.PrevLogIndex+len(args.Entries)))
+		rf.commitIndex = max(rf.log.snapshotIndex(), min(args.LeaderCommit, args.PrevLogIndex+len(args.Entries)))
 		rf.commit <- true
 	}
 	if logChanged {
 		rf.persist()
 	}
-	DPrintf("Server %d added entry %d to its log (length: %d)\n", rf.me, args.PrevLogTerm, len(rf.Log))
+	DPrintf("Server %d added entry %d to its log (length: %d)\n", rf.me, args.PrevLogTerm, rf.log.len())
 
 	reply.Success = true
 }
@@ -120,20 +112,11 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	reply.Term = rf.CurrentTerm
 	rf.lastReset = time.Now()
 
-	if args.LastIncludedIndex <= rf.lastSnapshotIndex { // i have more recent Snapshot
+	if args.LastIncludedIndex <= rf.log.snapshotIndex() { // i have more recent Snapshot
 		return
 	}
 
-	if args.LastIncludedIndex < len(rf.Log)+rf.lastSnapshotIndex &&
-		rf.getEntry(args.LastIncludedIndex).Term == args.LastIncludedTerm {
-		// the snapshot covers an entry we still have: keep the tail.
-		rf.truncateLog(args.LastIncludedIndex)
-	} else {
-		// conflicting or missing entry: keep only the dummy entry.
-		rf.Log = []LogEntry{{Term: args.LastIncludedTerm}}
-	}
-	rf.lastSnapshotIndex = args.LastIncludedIndex
-	rf.lastSnapshotTerm = args.LastIncludedTerm
+	rf.log.installSnapshot(args.LastIncludedIndex, args.LastIncludedTerm)
 	rf.commitIndex = max(rf.commitIndex, args.LastIncludedIndex)
 	rf.lastApplied = max(rf.lastApplied, args.LastIncludedIndex)
 	rf.persister.Save(rf.encodeRaftState(), args.Data)

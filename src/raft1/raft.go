@@ -43,9 +43,9 @@ type Raft struct {
 
 	CurrentTerm int
 	VotedFor    int
-	Log         []LogEntry
 	Role        Role
 
+	log         raftLog
 	commitIndex int
 	lastApplied int
 
@@ -55,10 +55,6 @@ type Raft struct {
 
 	lastReset       time.Time
 	electionTimeout time.Duration
-
-	// Snapshot state
-	lastSnapshotIndex int
-	lastSnapshotTerm  int
 }
 
 // return currentterm and whether this server
@@ -81,9 +77,9 @@ func (rf *Raft) encodeRaftState() []byte {
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.CurrentTerm)
 	e.Encode(rf.VotedFor)
-	e.Encode(rf.Log)
-	e.Encode(rf.lastSnapshotIndex)
-	e.Encode(rf.lastSnapshotTerm)
+	e.Encode(rf.log.persistEntries())
+	e.Encode(rf.log.snapshotIndex())
+	e.Encode(rf.log.snapshotTerm())
 	return w.Bytes()
 }
 
@@ -102,29 +98,28 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var currentTerm int
 	var votedFor int
-	var log []LogEntry
+	var entries []LogEntry
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
-		d.Decode(&log) != nil {
+		d.Decode(&entries) != nil {
 		panic("can't read persisted state")
 	} else {
 		rf.CurrentTerm = currentTerm
 		rf.VotedFor = votedFor
-		rf.Log = log
 	}
-	var lastSnapshotIndex int
-	var lastSnapshotTerm int
-	if err := d.Decode(&lastSnapshotIndex); err != nil {
+	var snapIndex int
+	var snapTerm int
+	if err := d.Decode(&snapIndex); err != nil {
 		// state persisted before snapshots were added
-		lastSnapshotIndex = 0
-		lastSnapshotTerm = 0
+		snapIndex = 0
+		snapTerm = 0
 	} else {
-		rf.lastSnapshotIndex = lastSnapshotIndex
-		rf.lastSnapshotTerm = lastSnapshotTerm
+		d.Decode(&snapTerm)
 	}
-	if rf.lastSnapshotIndex > 0 {
-		rf.commitIndex = rf.lastSnapshotIndex
-		rf.lastApplied = rf.lastSnapshotIndex
+	rf.log = *restoreLog(entries, snapIndex, snapTerm)
+	if rf.log.snapshotIndex() > 0 {
+		rf.commitIndex = rf.log.snapshotIndex()
+		rf.lastApplied = rf.log.snapshotIndex()
 	}
 }
 
@@ -143,29 +138,12 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if index <= rf.lastSnapshotIndex { // i have more updated snapshot
+	if index <= rf.log.snapshotIndex() { // i have more updated snapshot
 		return
 	}
-	rf.lastSnapshotTerm = rf.getEntry(index).Term
-	rf.truncateLog(index)
-	rf.lastSnapshotIndex = index
+	rf.log.snapshotAt(index)
 	raftState := rf.encodeRaftState()
 	rf.persister.Save(raftState, snapshot)
-}
-
-func (rf *Raft) truncateLog(index int) {
-	idx := index - rf.lastSnapshotIndex
-	dummyEntry := LogEntry{Term: rf.Log[idx].Term, Command: nil}
-
-	if len(rf.Log) > idx+1 {
-		rf.Log = append([]LogEntry{dummyEntry}, rf.Log[idx+1:]...)
-	} else {
-		rf.Log = []LogEntry{dummyEntry}
-	}
-}
-
-func (rf *Raft) getEntry(index int) LogEntry {
-	return rf.Log[index-rf.lastSnapshotIndex]
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -188,9 +166,9 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 	}
 	DPrintf("Server %d Got Command\n", rf.me)
 
-	rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, command})
+	rf.log.append(LogEntry{rf.CurrentTerm, command})
 	rf.persist()
-	return len(rf.Log) - 1 + rf.lastSnapshotIndex, rf.CurrentTerm, true
+	return rf.log.lastIndex(), rf.CurrentTerm, true
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -223,7 +201,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.Role = Follower
 	rf.lastReset = time.Now()
 	rf.resetElectionTimeout()
-	rf.Log = []LogEntry{{}}
+	rf.log = *newRaftLog()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
