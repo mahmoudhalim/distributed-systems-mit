@@ -8,14 +8,11 @@ package raft
 // raft interface.
 
 import (
-	//	"bytes"
-
 	"bytes"
 	"math/rand"
 	"sync"
 	"time"
 
-	//	"6.5840/labgob"
 	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
@@ -43,10 +40,6 @@ type Raft struct {
 	persister *tester.Persister   // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	commit    chan bool
-
-	// Your data here (3A, 3B, 3C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
 
 	CurrentTerm int
 	VotedFor    int
@@ -100,13 +93,11 @@ func (rf *Raft) persist() {
 	rf.persister.Save(raftstate, snapshot)
 }
 
-// restore previously persisted state.
+	// restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (3C).
-	// Example:
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currentTerm int
@@ -227,7 +218,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// wakeups; applyCommand re-reads commitIndex on every wakeup, so
 	// stale/buffered signals are harmless.
 	rf.commit = make(chan bool, 100)
-	// Your initialization code here (3A, 3B, 3C).
 	rf.CurrentTerm = 0
 	rf.VotedFor = -1
 	rf.Role = Follower

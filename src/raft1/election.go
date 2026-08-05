@@ -3,8 +3,7 @@ package raft
 import "time"
 
 // Check if a leader election should be started.
-// pause for a random amount of time between 50 and 350
-// milliseconds.
+// randomized election timeout between 300 and 550 milliseconds.
 func (rf *Raft) ticker() {
 	for {
 		rf.mu.Lock()
