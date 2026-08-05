@@ -28,53 +28,41 @@ func (rf *Raft) startElection() {
 	rf.mu.Unlock()
 	votes := 1
 	for peer := range rf.peers {
-		rf.mu.Lock()
 		if peer == rf.me {
-			rf.mu.Unlock()
 			continue
 		}
-		lastLogIndex := rf.log.lastIndex()
-		rf.mu.Unlock()
 		go func(p int) {
-			rf.mu.Lock()
-			args := &RequestVoteArgs{
-				Term:         rf.CurrentTerm,
-				CandidateID:  rf.me,
-				LastLogTerm:  rf.log.lastTerm(),
-				LastLogIndex: lastLogIndex,
-			}
-			rf.mu.Unlock()
-			reply := &RequestVoteReply{}
-			if rf.sendRequestVote(p, args, reply) {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-
-				if rf.Role != Candidate || args.Term != rf.CurrentTerm {
-					DPrintf("Server %d is a %d\n", rf.me, rf.Role)
-					return
-				}
-
-				if reply.Term > rf.CurrentTerm {
-					rf.becomeFollower(reply.Term)
-					return
-				}
-				if reply.VoteGranted {
-					votes++
-
-					if votes > len(rf.peers)/2 {
-						DPrintf("Server %d Won Election\n", rf.me)
-						rf.Role = Leader
-						rf.nextIndex = make([]int, len(rf.peers))
-						rf.matchIndex = make([]int, len(rf.peers))
-						for i := range rf.peers {
-							rf.nextIndex[i] = rf.log.len()
-							rf.matchIndex[i] = rf.log.snapshotIndex()
-						}
-						go rf.sendToFollowers()
-
+			callPeer(rf, p, Candidate,
+				func() (*RequestVoteArgs, *RequestVoteReply) {
+					return &RequestVoteArgs{
+						Term:         rf.CurrentTerm,
+						CandidateID:  rf.me,
+						LastLogTerm:  rf.log.lastTerm(),
+						LastLogIndex: rf.log.lastIndex(),
+					}, &RequestVoteReply{}
+				},
+				rf.sendRequestVote,
+				func(args *RequestVoteArgs, reply *RequestVoteReply) {
+					if reply.Term > rf.CurrentTerm {
+						rf.becomeFollower(reply.Term)
+						return
 					}
-				}
-			}
+					if reply.VoteGranted {
+						votes++
+
+						if votes > len(rf.peers)/2 {
+							DPrintf("Server %d Won Election\n", rf.me)
+							rf.Role = Leader
+							rf.nextIndex = make([]int, len(rf.peers))
+							rf.matchIndex = make([]int, len(rf.peers))
+							for i := range rf.peers {
+								rf.nextIndex[i] = rf.log.len()
+								rf.matchIndex[i] = rf.log.snapshotIndex()
+							}
+							go rf.sendToFollowers()
+						}
+					}
+				})
 		}(peer)
 	}
 }

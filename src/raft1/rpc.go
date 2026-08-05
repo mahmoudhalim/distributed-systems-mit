@@ -87,3 +87,39 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
+
+// callPeer owns the lifecycle of an outbound peer RPC, identical for
+// every RPC type: check the role and build the args under rf.mu, send
+// the request without the lock, then reacquire the lock and run apply
+// only if this server is still in role want with an unchanged term.
+// A reply that arrives after stepping down must never be applied:
+// that is how stale votes get counted and how a stale matchIndex
+// advance wedges a leader. The guard lives here, once.
+func callPeer[Args, Reply any](
+	rf *Raft,
+	peer int,
+	want Role,
+	build func() (Args, Reply),
+	send func(peer int, args Args, reply Reply) bool,
+	apply func(args Args, reply Reply),
+) {
+	rf.mu.Lock()
+	if rf.Role != want {
+		rf.mu.Unlock()
+		return
+	}
+	args, reply := build()
+	term := rf.CurrentTerm
+	rf.mu.Unlock()
+
+	if !send(peer, args, reply) {
+		return
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.Role != want || rf.CurrentTerm != term {
+		return
+	}
+	apply(args, reply)
+}
