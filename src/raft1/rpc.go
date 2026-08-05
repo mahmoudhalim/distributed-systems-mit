@@ -30,6 +30,12 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	// XTerm/XIndex/XLen allow the leader to back up nextIndex
+	// by more than one entry at a time on log conflict.
+	XTerm  int // term of the conflicting entry (0 if none)
+	XIndex int // first index of the conflicting term in this server's log
+	XLen   int // length of this server's log
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {

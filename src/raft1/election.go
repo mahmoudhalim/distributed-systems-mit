@@ -8,7 +8,7 @@ import "time"
 func (rf *Raft) ticker() {
 	for {
 		rf.mu.Lock()
-		if rf.role != Leader && time.Since(rf.lastReset) >= rf.electionTimeout {
+		if rf.Role != Leader && time.Since(rf.lastReset) >= rf.electionTimeout {
 			DPrintf("Server %d Election Timed Out\n", rf.me)
 			go rf.startElection()
 		}
@@ -20,12 +20,12 @@ func (rf *Raft) ticker() {
 func (rf *Raft) startElection() {
 	rf.mu.Lock()
 	DPrintf("Server %d Started Election\n", rf.me)
-	rf.currentTerm++
-	rf.votedFor = rf.me
+	rf.CurrentTerm++
+	rf.VotedFor = rf.me
 	rf.lastReset = time.Now()
-	rf.role = Candidate
+	rf.Role = Candidate
 	rf.resetElectionTimeout()
-
+	rf.persist()
 	rf.mu.Unlock()
 	votes := 1
 	for peer := range rf.peers {
@@ -34,14 +34,14 @@ func (rf *Raft) startElection() {
 			rf.mu.Unlock()
 			continue
 		}
-		lastLogIndex := len(rf.log) - 1
+		lastLogIndex := len(rf.Log) - 1
 		rf.mu.Unlock()
 		go func(p int) {
 			rf.mu.Lock()
 			args := &RequestVoteArgs{
-				Term:         rf.currentTerm,
+				Term:         rf.CurrentTerm,
 				CandidateID:  rf.me,
-				LastLogTerm:  rf.log[lastLogIndex].Term,
+				LastLogTerm:  rf.Log[lastLogIndex].Term,
 				LastLogIndex: lastLogIndex,
 			}
 			rf.mu.Unlock()
@@ -50,12 +50,12 @@ func (rf *Raft) startElection() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 
-				if rf.role != Candidate {
-					DPrintf("Server %d is a %d\n", rf.me, rf.role)
+				if rf.Role != Candidate || args.Term != rf.CurrentTerm {
+					DPrintf("Server %d is a %d\n", rf.me, rf.Role)
 					return
 				}
 
-				if reply.Term > rf.currentTerm {
+				if reply.Term > rf.CurrentTerm {
 					rf.becomeFollower(reply.Term)
 					return
 				}
@@ -64,11 +64,11 @@ func (rf *Raft) startElection() {
 
 					if votes > len(rf.peers)/2 {
 						DPrintf("Server %d Won Election\n", rf.me)
-						rf.role = Leader
+						rf.Role = Leader
 						rf.nextIndex = make([]int, len(rf.peers))
 						rf.matchIndex = make([]int, len(rf.peers))
 						for i := range rf.peers {
-							rf.nextIndex[i] = len(rf.log)
+							rf.nextIndex[i] = len(rf.Log)
 							rf.matchIndex[i] = 0
 						}
 						go rf.sendToFollowers()

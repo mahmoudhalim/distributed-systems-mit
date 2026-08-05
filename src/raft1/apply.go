@@ -5,18 +5,19 @@ import "6.5840/raftapi"
 func (rf *Raft) applyCommand() {
 	for range rf.commit {
 		rf.mu.Lock()
+		var msgs []raftapi.ApplyMsg
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-
-			applyMsg := raftapi.ApplyMsg{
+			msgs = append(msgs, raftapi.ApplyMsg{
 				CommandValid: true,
-				Command:      rf.log[i].Command,
+				Command:      rf.Log[i].Command,
 				CommandIndex: i,
-			}
+			})
 			DPrintf("Server %d committed entry %d\n", rf.me, i)
-
-			rf.applyCh <- applyMsg
 			rf.lastApplied++
 		}
 		rf.mu.Unlock()
+		for _, m := range msgs {
+			rf.applyCh <- m
+		}
 	}
 }

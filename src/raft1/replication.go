@@ -5,7 +5,7 @@ import "time"
 func (rf *Raft) sendToFollowers() {
 	for {
 		rf.mu.Lock()
-		if rf.role != Leader {
+		if rf.Role != Leader {
 			rf.mu.Unlock()
 			return
 		}
@@ -19,13 +19,13 @@ func (rf *Raft) sendToFollowers() {
 				rf.mu.Lock()
 
 				prevLogIndex := rf.nextIndex[peer] - 1
-				prevLogTerm := rf.log[prevLogIndex].Term
+				prevLogTerm := rf.Log[prevLogIndex].Term
 				var entries []LogEntry
-				if len(rf.log) > rf.nextIndex[peer] {
-					entries = append([]LogEntry{}, rf.log[rf.nextIndex[peer]:]...)
+				if len(rf.Log) > rf.nextIndex[peer] {
+					entries = append([]LogEntry{}, rf.Log[rf.nextIndex[peer]:]...)
 				}
 				args := &AppendEntriesArgs{
-					Term:         rf.currentTerm,
+					Term:         rf.CurrentTerm,
 					LeaderID:     rf.me,
 					PrevLogIndex: prevLogIndex,
 					PrevLogTerm:  prevLogTerm,
@@ -40,19 +40,44 @@ func (rf *Raft) sendToFollowers() {
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
 
-					if rf.role != Leader || args.Term != rf.currentTerm {
+					if rf.Role != Leader || args.Term != rf.CurrentTerm {
 						return
 					}
-					if reply.Term > rf.currentTerm {
+					if reply.Term > rf.CurrentTerm {
 						rf.becomeFollower(reply.Term)
 					}
 					if reply.Success {
-						rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
-						rf.nextIndex[peer] = rf.matchIndex[peer] + 1
-
-						rf.updateCommitIndex()
+						newMatch := args.PrevLogIndex + len(args.Entries)
+						if newMatch > rf.matchIndex[peer] {
+							rf.matchIndex[peer] = newMatch
+							rf.nextIndex[peer] = newMatch + 1
+							rf.updateCommitIndex()
+						}
 					} else {
-						rf.nextIndex[peer] = max(1, rf.nextIndex[peer]-1)
+						// back up nextIndex by more than one entry using the
+						// conflicting-entry information from the follower.
+						switch {
+						case reply.XLen > 0 && args.PrevLogIndex >= reply.XLen:
+							// follower's log is too short.
+							rf.nextIndex[peer] = max(1, reply.XLen)
+						case reply.XTerm > 0:
+							// find the last index in our log with that term.
+							idx := args.PrevLogIndex
+							if idx >= len(rf.Log) {
+								idx = len(rf.Log) - 1
+							}
+							for idx > 0 && rf.Log[idx].Term > reply.XTerm {
+								idx--
+							}
+							if idx > 0 && rf.Log[idx].Term == reply.XTerm {
+								rf.nextIndex[peer] = max(1, idx+1)
+							} else {
+								// we don't have that term.
+								rf.nextIndex[peer] = max(1, reply.XIndex)
+							}
+						default:
+							rf.nextIndex[peer] = max(1, args.PrevLogIndex)
+						}
 					}
 				}
 			}(peer)
@@ -63,8 +88,8 @@ func (rf *Raft) sendToFollowers() {
 }
 
 func (rf *Raft) updateCommitIndex() {
-	for n := len(rf.log) - 1; n > rf.commitIndex; n-- {
-		if rf.log[n].Term != rf.currentTerm {
+	for n := len(rf.Log) - 1; n > rf.commitIndex; n-- {
+		if rf.Log[n].Term != rf.CurrentTerm {
 			continue
 		}
 

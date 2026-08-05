@@ -4,17 +4,19 @@ package raft
 // expose to servers (or the tester), but see comments below for each
 // of these functions for more details.
 //
-// In addition,  Make() creates a new raft peer that implements the
+// In addition,  make() creates a new raft peer that implements the
 // raft interface.
 
 import (
 	//	"bytes"
 
+	"bytes"
 	"math/rand"
 	"sync"
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	tester "6.5840/tester1"
@@ -46,10 +48,10 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	currentTerm int
-	votedFor    int
-	log         []LogEntry
-	role        Role
+	CurrentTerm int
+	VotedFor    int
+	Log         []LogEntry
+	Role        Role
 
 	commitIndex int
 	lastApplied int
@@ -62,12 +64,12 @@ type Raft struct {
 	electionTimeout time.Duration
 }
 
-// return currentTerm and whether this server
+// return currentterm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.role == Leader
+	return rf.CurrentTerm, rf.Role == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -79,13 +81,13 @@ func (rf *Raft) GetState() (int, bool) {
 // (or nil if there's not yet a snapshot).
 func (rf *Raft) persist() {
 	// Your code here (3C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.CurrentTerm)
+	e.Encode(rf.VotedFor)
+	e.Encode(rf.Log)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -95,17 +97,20 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var log []LogEntry
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil {
+		panic("can't read persisted state")
+	} else {
+		rf.CurrentTerm = currentTerm
+		rf.VotedFor = votedFor
+		rf.Log = log
+	}
 }
 
 // how many bytes in Raft's persisted log?
@@ -138,14 +143,14 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if rf.role != Leader {
+	if rf.Role != Leader {
 		return -1, -1, false
 	}
 	DPrintf("Server %d Got Command\n", rf.me)
 
-	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
-
-	return len(rf.log) - 1, rf.currentTerm, true
+	rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, command})
+	rf.persist()
+	return len(rf.Log) - 1, rf.CurrentTerm, true
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -167,12 +172,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.commit = make(chan bool)
 	// Your initialization code here (3A, 3B, 3C).
-	rf.currentTerm = 0
-	rf.votedFor = -1
-	rf.role = Follower
+	rf.CurrentTerm = 0
+	rf.VotedFor = -1
+	rf.Role = Follower
 	rf.lastReset = time.Now()
 	rf.resetElectionTimeout()
-	rf.log = []LogEntry{{}}
+	rf.Log = []LogEntry{{}}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
