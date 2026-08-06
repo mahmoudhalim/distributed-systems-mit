@@ -74,10 +74,7 @@ func (l *raftLog) append(entries ...LogEntry) {
 // dummy at i (i must be >= snapIndex). Used after a log conflict:
 // the caller then appends the new entries.
 func (l *raftLog) truncateTo(i int) {
-	cut := i - l.snapIndex
-	if cut < 1 {
-		cut = 1 // always keep the dummy
-	}
+	cut := max(i-l.snapIndex, 1)
 	l.entries = l.entries[:cut]
 }
 
@@ -130,10 +127,7 @@ func (l *raftLog) matchPrefix(prevIndex int, theirs []LogEntry) int {
 // for sending in AppendEntries arguments. i must be <= lastIndex();
 // if it is not, nil is returned.
 func (l *raftLog) since(i int) []LogEntry {
-	rel := i - l.snapIndex
-	if rel < 0 {
-		rel = 0
-	}
+	rel := max(i-l.snapIndex, 0)
 	if rel >= len(l.entries) {
 		return nil
 	}

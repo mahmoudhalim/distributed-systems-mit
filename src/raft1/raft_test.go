@@ -257,7 +257,7 @@ func TestLeaderFailure3B(t *testing.T) {
 	tester.AnnotateConnection(ts.g.GetConnected())
 
 	// submit a command to each server.
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		ts.srvs[i].rfsrv.Start(104)
 	}
 
@@ -366,7 +366,7 @@ func TestConcurrentStarts3B(t *testing.T) {
 
 	var success bool
 loop:
-	for try := 0; try < 5; try++ {
+	for try := range 5 {
 		if try > 0 {
 			// give solution some time to settle
 			time.Sleep(3 * time.Second)
@@ -388,7 +388,7 @@ loop:
 		iters := 5
 		var wg sync.WaitGroup
 		is := make(chan int, iters)
-		for ii := 0; ii < iters; ii++ {
+		for ii := range iters {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -406,7 +406,7 @@ loop:
 		wg.Wait()
 		close(is)
 
-		for j := 0; j < servers; j++ {
+		for j := range servers {
 			if t, _ := ts.srvs[j].rfsrv.GetState(); t != term {
 				// term changed -- can't expect low RPC counts
 				details := fmt.Sprintf("term of server %v changed from %v to %v",
@@ -449,7 +449,7 @@ loop:
 			continue
 		}
 
-		for ii := 0; ii < iters; ii++ {
+		for ii := range iters {
 			x := 100 + ii
 			ok := false
 			for j := 0; j < len(cmds); j++ {
@@ -541,7 +541,7 @@ func TestBackup3B(t *testing.T) {
 
 	// submit lots of commands that won't commit
 	start := tester.GetAnnotateTimestamp()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		ts.srvs[leader1].rfsrv.Start(rand.Int())
 	}
 	text := fmt.Sprintf("submitted 50 commands to %v", leader1)
@@ -559,7 +559,7 @@ func TestBackup3B(t *testing.T) {
 	tester.AnnotateConnection(ts.g.GetConnected())
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		ts.one(rand.Int(), 3, true)
 	}
 
@@ -574,7 +574,7 @@ func TestBackup3B(t *testing.T) {
 
 	// lots more commands that won't commit
 	start = tester.GetAnnotateTimestamp()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		ts.srvs[leader2].rfsrv.Start(rand.Int())
 	}
 	text = fmt.Sprintf("submitted 50 commands to %v", leader2)
@@ -583,7 +583,7 @@ func TestBackup3B(t *testing.T) {
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		ts.g.DisconnectAll(i)
 	}
 	ts.g.ConnectOne((leader1 + 0) % servers)
@@ -592,12 +592,12 @@ func TestBackup3B(t *testing.T) {
 	tester.AnnotateConnection(ts.g.GetConnected())
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		ts.one(rand.Int(), 3, true)
 	}
 
 	// now everyone
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		ts.g.ConnectOne(i)
 	}
 	tester.AnnotateConnection(ts.g.GetConnected())
@@ -613,7 +613,7 @@ func TestCount3B(t *testing.T) {
 	ts.Begin("Test (3B): RPC counts aren't too high")
 
 	rpcs := func() (n int) {
-		for j := 0; j < servers; j++ {
+		for j := range servers {
 			n += ts.g.RpcCount(j)
 		}
 		return
@@ -632,7 +632,7 @@ func TestCount3B(t *testing.T) {
 	var total2 int
 	var success bool
 loop:
-	for try := 0; try < 5; try++ {
+	for try := range 5 {
 		if try > 0 {
 			// give solution some time to settle
 			time.Sleep(3 * time.Second)
@@ -702,7 +702,7 @@ loop:
 
 		failed := false
 		total2 = 0
-		for j := 0; j < servers; j++ {
+		for j := range servers {
 			if t, _ := ts.srvs[j].rfsrv.GetState(); t != term {
 				// term changed -- can't expect low RPC counts
 				// need to keep going to update total2
@@ -744,7 +744,7 @@ loop:
 	time.Sleep(RaftElectionTimeout)
 
 	total3 := 0
-	for j := 0; j < servers; j++ {
+	for j := range servers {
 		total3 += ts.g.RpcCount(j)
 	}
 
@@ -811,7 +811,7 @@ func TestPersist23C(t *testing.T) {
 	ts.Begin("Test (3C): more persistence")
 
 	index := 1
-	for iters := 0; iters < 5; iters++ {
+	for range 5 {
 		ts.one(10+index, servers, true)
 		index++
 
@@ -889,9 +889,9 @@ func TestFigure83C(t *testing.T) {
 	ts.one(rand.Int(), 1, true)
 
 	nup := servers
-	for iters := 0; iters < 1000; iters++ {
+	for range 1000 {
 		leader := -1
-		for i := 0; i < servers; i++ {
+		for i := range servers {
 			rf := ts.srvs[i].rfsrv
 			if rf != nil {
 				cmd := rand.Int()
@@ -926,7 +926,7 @@ func TestFigure83C(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		if ts.srvs[i].rfsrv == nil {
 			ts.restart([]int{i})
 		}
@@ -946,7 +946,7 @@ func TestUnreliableAgree3C(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for iters := 1; iters < 50; iters++ {
-		for j := 0; j < 4; j++ {
+		for j := range 4 {
 			wg.Add(1)
 			go func(iters, j int) {
 				defer wg.Done()
@@ -975,12 +975,12 @@ func TestFigure8Unreliable3C(t *testing.T) {
 	ts.one(rand.Int()%10000, 1, true)
 
 	nup := servers
-	for iters := 0; iters < 1000; iters++ {
+	for iters := range 1000 {
 		if iters == 200 {
 			ts.SetLongReordering(true)
 		}
 		leader := -1
-		for i := 0; i < servers; i++ {
+		for i := range servers {
 			cmd := rand.Int() % 10000
 			_, _, ok := ts.srvs[i].rfsrv.Start(cmd)
 			if ok {
@@ -1016,7 +1016,7 @@ func TestFigure8Unreliable3C(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		if !ts.g.IsConnected(i) {
 			ts.g.ConnectOne(i)
 		}
@@ -1052,7 +1052,7 @@ func internalChurn(t *testing.T, reliable bool) {
 			x := rand.Int()
 			index := -1
 			ok := false
-			for i := 0; i < servers; i++ {
+			for i := range servers {
 				// try them all, maybe one of them is a leader
 				ts.mu.Lock()
 				rf := ts.srvs[i].rfsrv
@@ -1092,12 +1092,12 @@ func internalChurn(t *testing.T, reliable bool) {
 	startcli := tester.GetAnnotateTimestamp()
 	ncli := 3
 	cha := []chan []int{}
-	for i := 0; i < ncli; i++ {
+	for i := range ncli {
 		cha = append(cha, make(chan []int))
 		go cfn(i, cha[i])
 	}
 
-	for iters := 0; iters < 20; iters++ {
+	for range 20 {
 		if (rand.Int() % 1000) < 200 {
 			i := rand.Int() % servers
 			ts.g.DisconnectAll(i)
@@ -1129,7 +1129,7 @@ func internalChurn(t *testing.T, reliable bool) {
 
 	time.Sleep(RaftElectionTimeout)
 	ts.SetReliable(true)
-	for i := 0; i < servers; i++ {
+	for i := range servers {
 		if ts.srvs[i].rfsrv == nil {
 			ts.restart([]int{i})
 		}
@@ -1143,7 +1143,7 @@ func internalChurn(t *testing.T, reliable bool) {
 
 	tester.AnnotateCheckerBegin("checking if any client has failed")
 	values := []int{}
-	for i := 0; i < ncli; i++ {
+	for i := range ncli {
 		vv := <-cha[i]
 		if vv == nil {
 			t.Fatal("client failed")
@@ -1209,7 +1209,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	ts.one(rand.Int(), servers, true)
 	leader1 := ts.checkOneLeader()
 
-	for i := 0; i < iters; i++ {
+	for i := range iters {
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1230,7 +1230,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		// perhaps send enough to get a snapshot
 		start := tester.GetAnnotateTimestamp()
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
+		for range nn {
 			ts.srvs[sender].rfsrv.Start(rand.Int())
 		}
 		text := fmt.Sprintf("submitting %v commands to %v", nn, sender)
@@ -1300,10 +1300,10 @@ func TestSnapshotAllCrash3D(t *testing.T) {
 
 	ts.one(rand.Int(), servers, true)
 
-	for i := 0; i < iters; i++ {
+	for range iters {
 		// perhaps enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
+		for range nn {
 			ts.one(rand.Int(), servers, true)
 		}
 
@@ -1335,7 +1335,7 @@ func TestSnapshotInit3D(t *testing.T) {
 
 	// enough ops to make a snapshot
 	nn := SnapShotInterval + 1
-	for i := 0; i < nn; i++ {
+	for range nn {
 		ts.one(rand.Int(), servers, true)
 	}
 

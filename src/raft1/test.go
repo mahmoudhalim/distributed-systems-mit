@@ -28,7 +28,7 @@ type Test struct {
 }
 
 type IraftServer interface {
-	Start(command interface{}) (int, int, bool)
+	Start(command any) (int, int, bool)
 	GetState() (int, bool)
 }
 
@@ -69,7 +69,7 @@ func makeTest(t *testing.T, n int, reliable bool, snapshot bool) *Test {
 	ts.Config.SetLongDelays(true)
 	ts.Config.AddService(ts) // For RPCs from server to tester
 	ts.g = ts.Group(tester.GRP0)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ts.mksrv(i, ts.g.DaemonClnt(i))
 	}
 	return ts
@@ -113,7 +113,7 @@ func (ts *Test) restart(srvs []int) {
 
 func (ts *Test) checkOneLeader() int {
 	tester.AnnotateCheckerBegin("checking for a single leader")
-	for iters := 0; iters < 10; iters++ {
+	for range 10 {
 		ms := 450 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 
@@ -364,7 +364,7 @@ func (ts *Test) checkFinished() bool {
 // but don't wait forever.
 func (ts *Test) wait(index int, n int, startTerm int) any {
 	to := 10 * time.Millisecond
-	for iters := 0; iters < 30; iters++ {
+	for range 30 {
 		nd, _ := ts.nCommitted(index)
 		if nd >= n {
 			break

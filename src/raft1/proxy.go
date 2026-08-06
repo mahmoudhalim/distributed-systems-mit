@@ -26,7 +26,7 @@ func (rfp *Rfproxy) GetState() (int, bool) {
 	return rep.Term, rep.Leader
 }
 
-func (rfp *Rfproxy) Start(command interface{}) (int, int, bool) {
+func (rfp *Rfproxy) Start(command any) (int, int, bool) {
 	args := &StartArgs{
 		Command: command,
 	}

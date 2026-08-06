@@ -80,7 +80,7 @@ func newRfsrv(ts Itester, ends []*labrpc.ClientEnd, grp tester.Tgid, srv int, pe
 	return s
 }
 
-func (rs *rfsrv) Start(command interface{}) (int, int, bool) {
+func (rs *rfsrv) Start(command any) (int, int, bool) {
 	rf := rs.getraft()
 	if rf == nil {
 		return 0, 0, false
