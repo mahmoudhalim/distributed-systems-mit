@@ -106,13 +106,7 @@ func (rf *Raft) sendInstallSnapshotsToPeer(peer int) {
 				rf.becomeFollower(reply.Term)
 				return
 			}
-			// Unconditionally move past the installed snapshot. A stale
-			// matchIndex (advanced by an out-of-order AppendEntries reply)
-			// must not keep nextIndex pinned at/below the snapshot, or the
-			// leader would re-send the same snapshot forever.
-			rf.nextIndex[peer] = args.LastIncludedIndex + 1
-			if args.LastIncludedIndex > rf.matchIndex[peer] {
-				rf.matchIndex[peer] = args.LastIncludedIndex
-			}
+			rf.nextIndex[peer] = max(rf.nextIndex[peer], args.LastIncludedIndex+1)
+			rf.matchIndex[peer] = max(rf.matchIndex[peer], args.LastIncludedIndex)
 		})
 }
